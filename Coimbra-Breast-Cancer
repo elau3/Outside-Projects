@@ -1,0 +1,182 @@
+#We will be exploring and implementing data mining tasks on this Breast Cancer Coimbra dataset. 
+#Our goals are to determine if these nine variables can predict instances of breast cancer within the
+#Coimbra population. This is a small dataset, comprised of nine variables and 116 rows of data. 
+#I will implement a logistic regression as the baseline model and then a randomforest classification
+#in order to better predict breast cancer. 
+
+#Data Source: https://archive.ics.uci.edu/ml/datasets/Breast+Cancer+Coimbra
+
+#Load libraries
+library(tidyverse)
+library(reshape2)
+library(corrplot)
+library(caret)
+library(randomForest)
+library(pROC)
+
+#Load data and view summary information. 
+setwd("~/Documents/MQM/Linkedin Projects")
+coim_data <- read.csv("Breast Cancer Coimbra dataR2.csv")
+head(coim_data)
+nrow(coim_data)
+str(coim_data)
+summary(coim_data)
+
+
+#######################################
+##### Data Cleaning/ Modification #####
+#######################################
+#Check for NAs... luckly we do no have any.
+apply(coim_data, 2, function(x) any(is.na(x)))
+
+#Classification is our target variable. It is a int variable of 1s and 2s, healthy and patients respectively
+#Let's convert it to 0s and 1s. 
+coim_data$Classification <- ifelse(coim_data$Classification == 1, 0, 1)
+
+#Let's graph
+#Check for outliers
+ggplot(melt(coim_data[,1:9]), aes(variable, value)) +
+      geom_boxplot(outlier.colour="blue", outlier.shape=10, outlier.size=2, notch=FALSE) +
+      theme(axis.text.x = element_text(angle = 90, hjust = 1))
+# There are a few outliers in the dataset, however, health data may rely on these outliers for detection. Also, 
+# the limited amount of data poses a problem and removing any data would reduce the data we have to work with. 
+
+#BMI on Glucose
+ggplot(coim_data, aes(BMI, Glucose, colour = Classification)) +
+  geom_point() 
+#Visually, the average Glucose of patients is higher than that of the healthy patients. Also, the outliers in
+#the data shows that keeping them may provide us insightful data to predict breast cancer. 
+
+# Correlation Plot
+corr =cor(coim_data,method="s")
+corrplot(corr, method = c("number"), type = c("upper"))
+
+#######################################
+####### Implement ML Algorithms #######
+#######################################
+
+#Implement train and test datasets. We will use a 75-25 split
+smp_size <- floor(0.75 * nrow(coim_data))
+
+#Set the seed to make partition reproducible
+set.seed(187)
+train_ind <- sample(seq_len(nrow(coim_data)), size = smp_size)
+
+#Create train and test datasets
+train <- coim_data[train_ind, ]
+test <- coim_data[-train_ind, ]
+
+#With such a small dataset, we should be worried about balance. We need to ensure balance because predicting
+#using auc or accuracy could lead to misleading results. We use a t-test to test whether the differences are
+#significantly different than 0. 
+table1 <- data.frame(var_name = numeric(0),
+                     mean_train = numeric(0), 
+                     mean_test = numeric(0), 
+                     p_value = numeric(0)
+)
+for(i in c( "Age", "BMI", "Glucose", "Insulin", "HOMA", "Leptin", "Adiponectin", "Resistin","MCP.1", "Classification")){
+  table1[nrow(table1)+1,] <-  c(i,
+                                round(mean(train[[i]]),3),
+                                round(mean(test[[i]]),3),
+                                round(t.test(train[[i]],test[[i]])$p.value,3)
+  )
+}
+table1
+#The balance of the train and test datasets looks good. The p-values indicate that none of the variables are 
+#significantly different from each dataset. 
+
+##### Logistic Regression #####
+#Logistic regression is the simiplist model to implement. In addition, we have a limited set of variables so we
+#do not need to worry about regularization or variable selection. 
+glm.model <- glm(Classification~.,family=binomial(link='logit'),data=train)
+summary(glm.model)
+
+# Predict glm on test data
+train$predict.glm <- predict(glm.model, newdata = train)
+
+# find optimal threshold for glm
+plot.roc(train$Classification, train$predict.glm,          # data
+         percent = TRUE,                    # show all values in percent
+         partial.auc=c(100, 50), 
+         partial.auc.correct=TRUE,          # define a partial AUC (pAUC)
+         print.auc=TRUE,
+         partial.auc.focus = "se",
+         #display pAUC value on the plot with following options:
+         print.auc.pattern = "Corrected pAUC (100-90%% SP):\n%.1f%%",
+         print.auc.col = "#1c61b6",
+         auc.polygon = TRUE, 
+         auc.polygon.col = "#1c61b6",       # show pAUC as a polygon
+         max.auc.polygon = TRUE, 
+         max.auc.polygon.col = "#1c61b622", # also show the 100% polygon
+         main = "Partial AUC (pAUC)")
+#Find optimal threshold when sensitivity is between 100% and 70%
+roc_curve = roc(Classification ~ predict.glm , data = train, partial.auc = c(1, .70), partial.auc.focus="sensitivity")
+roc_curve$auc
+
+# Threshold of 0.1652
+threshold <- 0.1652
+# dummy variable for glm using threshold
+train$predict.glm.dummy <- ifelse(train$predict.glm > threshold, 1, 0)
+
+#results of train prediction
+train.glmtab <- table(train$predict.glm.dummy, train$Classification )
+confusionMatrix(train.glmtab, positive = '1')
+
+# Predict glm on test data
+test$predict.glm <- predict(glm.model, newdata = test)
+test$predict.glm.dummy <- ifelse(test$predict.glm > threshold, 1, 0)
+
+#results of cluster match
+glmtab <- table(test$predict.glm.dummy, test$Classification )
+confusionMatrix(glmtab, positive = '1')
+
+#GLM results - Accuracy 68.97%, Sensitivity 70.59%, Specificity 66.7%
+# The results are promising! There are 29 individuals in our dataset and the logistic algorithm was was to 
+# predict 21 of them accurately. There were 3 True negatives which aren't too concerning. There were 5 false 
+# negatives which are more concerning because, in our hypothical situation, those individuals would not be 
+# flagged as potential candidates for further test or monitoring. 
+
+
+
+# try randomforest
+rf.model <- randomForest(Classification~ . ,ntree = 500, data =train)
+train$predict.rf <- predict(rf.model, data = train)
+#Find optimal threshold when sensitivity is between 100% and 60%
+roc_curve = roc(Classification ~ predict.rf , data = train, partial.auc = c(1, .6), partial.auc.focus="sensitivity")
+# Threshold of 0.2532
+roc_curve$auc
+
+threshold.rf <- 0.2532
+train$predict.rf.dummy <- ifelse(train$predict.rf >= threshold.rf, 1, 0)
+
+rftab <- table(train$predict.rf.dummy, train$Classification )
+confusionMatrix(rftab, positive = '1')
+
+#Predict on test set
+test$predict.rf <- predict(rf.model, newdata= test)
+test$predict.rf.dummy <- ifelse(test$predict.rf >= threshold.rf, 1, 0)
+
+rftab_test <- table(test$predict.rf.dummy, test$Classification )
+confusionMatrix(rftab_test, positive = '1')
+
+# RandomForest Results - Accuracy 65.52%, Sesitivity 94.12%. This model identifies more True Positives than the glm 
+# model before. However, the randomforest is identifying more True Negatives which is also concerning. From a cost
+# perspective, additional primary cost may be as costly as not identifying those individuals in the first place. 
+
+# Let's try the caret package to maximize results with cross validation. 
+
+control <- trainControl(method="cv", number=10, search="grid")
+
+set.seed(50)
+tunegrid <- expand.grid(.mtry=c(1:9))
+rf_gridsearch <- train(factor(Classification)~., data=train[,1:10], method="rf", metric="Accuracy", ntree=1000, tuneGrid=tunegrid, trControl=control)
+print(rf_gridsearch)
+plot(rf_gridsearch)
+
+test$predict.rf.caret <- predict(rf_gridsearch, newdata = test)
+
+rftab_tune <- table(test$predict.rf.caret, test$Classification )
+confusionMatrix(rftab_tune, positive = '1')
+
+
+
