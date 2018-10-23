@@ -4,8 +4,6 @@
 #I will implement a logistic regression as the baseline model and then a randomforest classification
 #in order to better predict breast cancer. 
 
-#Data Source: https://archive.ics.uci.edu/ml/datasets/Breast+Cancer+Coimbra
-
 #Load libraries
 library(tidyverse)
 library(reshape2)
@@ -163,20 +161,30 @@ confusionMatrix(rftab_test, positive = '1')
 # model before. However, the randomforest is identifying more True Negatives which is also concerning. From a cost
 # perspective, additional primary cost may be as costly as not identifying those individuals in the first place. 
 
-# Let's try the caret package to maximize results with cross validation. 
+#############################
+####### Final Results #######
+#############################
 
-control <- trainControl(method="cv", number=10, search="grid")
+glmplot <- data.frame(glmtab[2,2],glmtab[1,1], glmtab[2,1], glmtab[1,2])
+names(glmplot) <- c("TP","TN","FP","FN")
 
-set.seed(50)
-tunegrid <- expand.grid(.mtry=c(1:9))
-rf_gridsearch <- train(factor(Classification)~., data=train[,1:10], method="rf", metric="Accuracy", ntree=1000, tuneGrid=tunegrid, trControl=control)
-print(rf_gridsearch)
-plot(rf_gridsearch)
+rfplot<- data.frame(rftab_test[2,2],rftab_test[1,1], rftab_test[2,1], rftab_test[1,2])
+names(rfplot) <- c("TP","TN","FP","FN")
 
-test$predict.rf.caret <- predict(rf_gridsearch, newdata = test)
+colours <- c("green", "blue", "yellow", "red")
 
-rftab_tune <- table(test$predict.rf.caret, test$Classification )
-confusionMatrix(rftab_tune, positive = '1')
+barplot(as.matrix(glmplot), main="GLM Results", ylab = "Values", beside = TRUE, col = colours, ylim=c(0,18), axes = F)
+axis(2,seq(0,16,2),c(0,2,4,6,8,10,12,14,16))
+barplot(as.matrix(rfplot), main="RF Results", ylab = "Values", beside = TRUE, col = colours, ylim=c(0,18), axes = F)
+axis(2,seq(0,16,2),c(0,2,4,6,8,10,12,14,16))
 
-
+# In my opinion, the random forest results would be the model of choice when it comes to predicting breast
+# cancer. The ability of the random forest to miss only one patient is great, but the negative about this model
+# is that it produces many false positives. In this case, the time of blood draw is the question of the study and                        
+# whether these prediction can be applied. If these biomarkers can be identified early enough then the cost of 
+# these false positives blood draws would be irrelevant as compared with the savings from early detection of 
+# breast cancer. Other algorithms can be implemented, but the limited dataset is the restrictive piece in this
+# case study. Any model would potentially overfit the data because of the 89 train dataset observations. 
+# I would recommend that the study increase the sample size before any deployment to shore up any concerns about 
+# the data and predictive capabilities. 
 
