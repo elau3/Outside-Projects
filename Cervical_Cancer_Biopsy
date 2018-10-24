@@ -1,0 +1,209 @@
+#### Cervical Cancer ####
+# The data provided several target variables for prediction. Biopsy will be used as the target
+# variables because it is the best test available to predict cervical cancer. The cleaned dataset
+# only lists 53 instances of positive cervical cancer. We will utilize the caret package to 
+# implement advanced algorithms. Our goal is to identify as many cervical cancer patiants as
+# possible. 
+
+
+#### Libraries ####
+#Load libraries
+library(tidyverse)
+library(caret)
+library(keras)
+library(VIM)
+library(plyr)
+library(parallel)
+library(doParallel)
+
+setwd("~/Documents/MQM/Linkedin Projects")
+#### Data Load ####
+cer_data <- read.csv("kag_risk_factors_cervical_cancer.csv")
+str(cer_data)
+head(cer_data)
+
+#### Data Processing ####
+# There are many '?' in the data. We need to clean up the data before we run any models. Let's see what we have!
+
+#Create function to view question mark cells for each variable
+quest_cells <- function(names, frame) {
+  var_names<- names(frame)
+  
+  table1 <- data.frame(names = numeric(0),
+                       count_non_data = numeric(0))
+  for(i in var_names){
+      table1[nrow(table1)+1,] <-  c(i,
+                                    sum(frame[,i] == "?")
+      )
+                     }
+  return(table1)
+}
+
+var_names<- names(cer_data)
+quest_cells(var_names,cer_data)
+
+# We have a lot of missing data and it seems like the same individuals are missing the same chucks of data. 
+# Also, STDs.Time.Since.first/last are essentially empty. I will remove these variables from the dataset before
+# other data preprocessing is implemented.
+
+cer_data$STDs..Time.since.first.diagnosis <- NULL
+cer_data$STDs..Time.since.last.diagnosis <- NULL
+
+# Count the number of question marks per row
+cer_data$MissCount = rowSums(cer_data == "?")
+# Remove all rows with greater than 10 question marks.
+new_cer_data <- subset(cer_data, cer_data$MissCount < 11)
+
+# Check what we have now. It still seems like we have data with question marks.
+var_names<- names(cer_data)
+quest_cells(var_names,new_cer_data)
+
+# Replace the question marks to blank data. 
+new_cer_data[ new_cer_data == "?" ] <- ""
+
+# Arbitrarily, I want at least 700 obs. Let's use knn to pick data for the missing obs. 
+final_cer_data <- kNN(data = new_cer_data[,-5], k=5)
+
+summary(final_cer_data)
+
+# Let's finalize our data that we will be using. 
+vnames <- names(final_cer_data)
+quest_cells(vnames, final_cer_data)
+
+# The question mark factor was kept, we need factors classes without it. 
+final_data <- droplevels(final_cer_data[,1:33])
+
+final_data$STDs.AIDS <- NULL # no useful data
+final_data$STDs.cervical.condylomatosis <- NULL #no useful data
+
+# Drop irrelevant target variables.
+final_data$Hinselmann <- NULL
+final_data$Schiller <- NULL
+final_data$Citology <- NULL
+
+#### Data Exploration ####
+summary(final_data)
+str(final_data)
+
+#Change the data to the proper format, integers and factors.
+final_data$Number.of.sexual.partners <- as.integer(as.character(final_data$Number.of.sexual.partners))
+final_data$First.sexual.intercourse <- as.integer(as.character(final_data$First.sexual.intercourse))
+final_data$Num.of.pregnancies   <- as.integer(as.character(final_data$Num.of.pregnancies))
+final_data$Smokes..years. <- as.integer(as.character(final_data$Smokes..years.))
+final_data$Smokes..packs.year. <- as.integer(as.character(final_data$Smokes..packs.year.))
+final_data$Hormonal.Contraceptives..years. <- as.integer(as.character(final_data$Hormonal.Contraceptives..years.))
+final_data$IUD..years. <- as.integer(as.character(final_data$IUD..years.))
+final_data$STDs..number.  <- as.integer(as.character(final_data$STDs..number.))
+final_data$STDs..Number.of.diagnosis <- as.factor(as.character(final_data$STDs..Number.of.diagnosis))
+final_data$Dx.Cancer <- as.factor(as.character(final_data$Dx.Cancer))
+final_data$Dx.CIN <- as.factor(as.character(final_data$Dx.CIN))
+final_data$Dx.HPV <- as.factor(as.character(final_data$Dx.HPV))
+final_data$Dx <- as.factor(as.character(final_data$Dx))
+final_data$Hinselmann <- as.factor(as.character(final_data$Hinselmann))
+final_data$Schiller <- as.factor(as.character(final_data$Schiller))
+final_data$Citology <- as.factor(as.character(final_data$Citology))
+final_data$Biopsy <- as.factor(as.character(final_data$Biopsy))
+
+# Density Plots of all continous variables
+myfillcolors=c("#ff003f","#0094ff", "#ae00ff" , "#94ff00", "#ffc700","#fc1814")
+df_den= final_data %>%gather(c(Age:Smokes..packs.year.,Hormonal.Contraceptives..years.,IUD..years.,STDs..number.),key="Parameter",value="Value")
+
+df_den %>% ggplot(aes(x=Value,fill=Biopsy))+
+    geom_density(alpha=0.2)+ggtitle("Biopsy")+
+    facet_wrap(~Parameter,ncol=3,scales="free")+
+    scale_fill_manual(values=myfillcolors)
+
+#Boxplot of all continuous variables
+d<- final_data %>% select(c(Age:Smokes..packs.year.,Hormonal.Contraceptives..years.,IUD..years.,STDs..number.))
+
+ggplot(data=melt(d), aes(variable, value)) +
+         geom_boxplot(outlier.colour="blue", outlier.shape=10, outlier.size=2, notch=FALSE) +
+         theme(axis.text.x = element_text(angle = 90, hjust = 1)) +
+         ggtitle("Boxplot to view outliers")
+
+# THe data is incredibility unbalanced. We will make it balanced during the modeling stage. 
+ggplot(final_data, aes(Biopsy))+
+  geom_bar()
+#### Models ####
+#Implement train and test datasets. We will use a 75-25 split
+smp_size <- floor(0.75 * nrow(final_data))
+
+#Set the seed to make partition reproducible
+set.seed(7342)
+train_ind <- sample(seq_len(nrow(final_data)), size = smp_size)
+
+#Create train and test datasets
+train <- final_data[train_ind, ]
+test <- final_data[-train_ind, ]
+
+up_train <- upSample(x = train[, -ncol(train)],
+                     y = train$Biopsy)      
+
+summary(up_train)
+
+### Random Forest
+
+coreNum = detectCores() - 1 #leave one core for the operating system
+cl <- makeCluster(coreNum) 
+registerDoParallel(cl)
+
+metric <- "Accuracy"
+#for cross validation
+control <- trainControl(method = "cv",
+                          number = 10,
+                          allowParallel = TRUE,
+                          savePredictions = TRUE)
+
+set.seed(23987)
+glm.model <- train(Class~., data=up_train, method="glm", metric=metric, trControl=control)
+plot(varImp(object=glm.model),main="GLM - Variable Importance")
+
+set.seed(23987)
+rf.model <- train(Class~., data=up_train, method="rf", metric=metric, trControl=control, varImp=TRUE)
+plot(varImp(object=rf.model),main="RF - Variable Importance")
+
+set.seed(23987)
+ada.model <- train(Class~., data=up_train, method="adaboost", metric=metric, trControl=control)
+plot(varImp(object=ada.model),main="ADABoost - Variable Importance")
+
+set.seed(23987)
+knn.model <- train(Class~., data=up_train, method="knn", metric=metric, trControl=control)
+
+
+set.seed(23987)
+my.grid <- expand.grid(.decay = c(0.5, 0.1), .size = c(5, 6, 7, 8, 9))
+
+NN.model <- train(Class~., data = up_train,
+                 method = "nnet",
+                 trControl= control,
+                 preProcess=c("scale","center"),
+                 metric=metric, maxit = 1000, tuneGrid = my.grid
+)
+plot(NN.model)
+results <- resamples(list(glm = glm.model, rf=rf.model, ada = ada.model, NN = NN.model, knn = knn.model))
+summary(results)
+
+dotplot(results)
+str(up_train)
+
+#### Model Results ####
+
+# Predict on the validation dataset
+predict.rf <- predict(rf.model, test)
+predict.ada <- predict(ada.model, test)
+predict.KNN <- predict(knn.model, test)
+predict.NN <- predict(NN.model, test, type="raw")
+
+
+confusionMatrix(predict.rf, test$Biopsy, positive = '1')
+confusionMatrix(predict.ada, test$Biopsy, positive = '1')
+confusionMatrix(predict.KNN,  test$Biopsy,positive = '1')
+confusionMatrix(predict.NN,  test$Biopsy,positive = '1')
+
+#### Conclusion ####
+# The KNN algorithm achieved a accuracy of 65.61%, a sesitivity of 44.44%, and specificity of 66.67%. 
+# The type II errors is the main problem with the prediction algorithms are concerning as 5 out
+# of 9 were not identified. Although KNN didn not provide the best accuracy nor sensitivity, it was
+# able to discover 2 more patients than the other more advanced algorithms. We want to predict
+# as many unhealthy patients as possible even if we predict more type I errors.
+
