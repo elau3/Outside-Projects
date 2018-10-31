@@ -1,0 +1,146 @@
+### Exploring Medicare Provider Data and Ratings ###
+# View which states and provider/ provider groups are high risk. We will identity provider groups
+# so that we can report on which groups have high risks. Providers will have similar names
+# that we can utilize to cluster together. We will keep state information as well to further 
+# separate the providers. Since provider groups span multiple cities, the practices in one location
+# is usually representative of other place. 
+
+### Summary ###
+# Try and seek out provider under the name of AMEDISYS HOME HEALTH in NC, SC, GA. 
+# They consistency have the highest quality star ratings amoung provider groups in all three states. 
+# In NC, avoid SAMPSON HOME HEALTH because they have high unplanned procedures and readmission, ranking
+# in the top 3 in each measurement. Other provider groups did not show up in the top 3 in both
+# measurements, but those providers can be found below. 
+
+library(tidyverse)
+library(ggplot2)
+library(reshape2)
+
+setwd("~/Documents/MQM/Linkedin Projects")
+medi_data <- read.csv("Home_Health_Care_Agencies.csv")
+head(medi_data)
+str(medi_data)
+class(medi_data)
+
+# Remove columns with keyword 'footnote' becayse they are all irrelevant
+medi_data <- select(medi_data, -contains("Footnote"))
+
+# Add column to show NA values per row
+medi_data$na_count <- apply(medi_data, 1, function(x) sum(is.na(x)))
+
+# Plot values to review data
+hist(medi_data$na_count)
+max(medi_data$na_count)
+
+# Keep data with no missing values
+medi_data <- filter(medi_data, (State == 'NC' | State == 'SC' | State == 'VA' | State == 'GA') & na_count == '0')
+
+
+# Summary data: Number of facilities per state, per city, type of ownership
+
+num_per_state <-  medi_data %>%
+                  group_by(State) %>%
+                  summarise(n_distinct(CMS.Certification.Number..CCN..))
+num_per_city  <-  medi_data %>%
+                  group_by(City) %>%
+                  summarise(n_distinct(CMS.Certification.Number..CCN..))
+
+ownership_per_state  <-  medi_data %>%
+                          group_by(State, Type.of.Ownership) %>%
+                          summarise(n_distinct(CMS.Certification.Number..CCN..))
+
+# Show ownership data per state
+ownership_data <- medi_data %>% select(State, Type.of.Ownership, CMS.Certification.Number..CCN..)
+ownership_data <- melt(ownership_data)
+ownership_data$value <- 1
+
+ggplot(ownership_data, aes(x=State, y=value, fill = Type.of.Ownership)) +
+  geom_bar(stat="identity", position = "stack") +
+  ggtitle("Type of Ownership per State")
+
+# Configure readmit data
+readmit <- medi_data %>% select(State, Type.of.Ownership, How.often.home.health.patients..who.have.had.a.recent.hospital.stay..had.to.be.re.admitted.to.the.hospital, How.often.home.health.patients..who.have.had.a.recent.hospital.stay..received.care.in.the.hospital.emergency.room.without.being.re.admitted.to.the.hospital)
+readmit <- melt(readmit)
+readmit$value <- 1
+
+# Plot readmit
+ggplot(readmit, aes(x=How.often.home.health.patients..who.have.had.a.recent.hospital.stay..had.to.be.re.admitted.to.the.hospital, y=value, fill=State)) +
+  geom_bar(stat="identity", position = "stack") +
+  ggtitle("Readmitted Patients Rating") +
+  xlab("HH Patients that had to be Readmitted")
+
+# Plot readmit
+ggplot(readmit, aes(x=How.often.home.health.patients..who.have.had.a.recent.hospital.stay..had.to.be.re.admitted.to.the.hospital, y=value, fill=State)) +
+  geom_bar(stat="identity", position = "stack") +
+  ggtitle("Readmitted Patients Rating") +
+  xlab("HH Patients that had to be Readmitted") +
+  ylab("Count of Readmit Patients") +
+  facet_wrap(~State) +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1))
+
+# Health Scores per state
+var_names <- c("State", "Mean_Star_Rating", "Mean_Timely_Manner", "Mean_Taught_Drugs", "Mean_Check_Risk_Falling", "Mean_Check_Flu_Shot")
+healthscores_per_state <-  medi_data %>%
+  group_by(State) %>%
+  summarise(mean(Quality.of.Patient.Care.Star.Rating),
+            mean(How.often.the.home.health.team.began.their.patients..care.in.a.timely.manner),
+            mean(How.often.the.home.health.team.taught.patients..or.their.family.caregivers..about.their.drugs),
+            mean(How.often.the.home.health.team.checked.patients..risk.of.falling),
+            mean(How.often.the.home.health.team.determined.whether.patients.received.a.flu.shot.for.the.currnet.flu.season))
+#replace column names
+colnames(healthscores_per_state) <- var_names
+
+# Health Scores per Provider Group
+## Group providers together based on the state and provider groups.
+
+library(stringdist)
+
+# calculate distances between provider names
+d <- stringdistmatrix(x, method="soundex");
+
+# cluster the providers together
+h <- hclust(d)
+
+# We will use 200 clusters
+m <- cutree(h, k = 200)
+
+# Build the dataframe of provide names and clusters 
+df <- data.frame(names = medi_data$Provider.Name, 
+                 group.class = m)
+df <- df %>% distinct(group.class, names)
+
+# Concatenate names together
+df2 <- df %>% group_by(group.class) %>% summarise(names = paste(names, collapse = "; "))
+as.factor(df2$names)
+
+combined <- left_join(df, df2, by= c("group.class"))
+colnames(combined) <- c("Provider.Name", "Group.number", "Provider.Group")
+
+# Combine original dataset with information on provider groups
+medi_group <- left_join(medi_data, combined, by= c("Provider.Name"))
+
+#View Column names
+colnames(medi_group)
+
+# Select subset of data
+medi_group <- medi_group %>% select(1,3,16:32,37)
+summary_stats<- medi_group %>% group_by(Provider.Group, State) %>%  summarise_all(funs(mean))
+
+# Top three provider groups per state by Quality of Patient care
+Top_3_Provider_Groups <- summary_stats %>% 
+                         select(Provider.Group, State, Quality.of.Patient.Care.Star.Rating) %>% 
+                         group_by(State) %>%
+                         top_n(3,Quality.of.Patient.Care.Star.Rating)
+  
+# Top three provider groups per state by Patient readmission
+Top_3_Provider_Groups_readmit <-  summary_stats %>% 
+                                  select(Provider.Group, State, How.often.home.health.patients.had.to.be.admitted.to.the.hospital) %>% 
+                                  group_by(State) %>%
+                                  top_n(3,How.often.home.health.patients.had.to.be.admitted.to.the.hospital)
+
+# Top three provider groups per state by for unplanned care
+Top_3_Provider_Groups_unplanned <-  summary_stats %>% 
+                                    select(Provider.Group, State, How.often.patients.receiving.home.health.care.needed.urgent..unplanned.care.in.the.ER.without.being.admitted) %>% 
+                                    group_by(State) %>%
+                                    top_n(3,How.often.patients.receiving.home.health.care.needed.urgent..unplanned.care.in.the.ER.without.being.admitted)
+
