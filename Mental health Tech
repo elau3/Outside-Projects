@@ -1,0 +1,37 @@
+## Data Cleaning for https://www.kaggle.com/osmi/mental-health-in-tech-survey
+## Cleaning a few columns that have miss matched data. 
+
+library(tidyverse)
+
+data <- read.csv("survey.csv")
+head(data)
+str(data)
+summary(data)
+
+# Data Cleaning
+data$comments <- NULL
+
+# There are ages under 18. I will remove all rows with ages under 18 because it is highly unlikely to 
+# encounter someone working under such age in technology and most developed countries, as our data set is mostly composed of. 
+as.numeric(data$Age)
+data<-data[!(data$Age < 18 | data$Age > 90),]
+
+# Gender is populated with many factors,49. Analyze distinct response and attempt to group. 
+# We will categorize by outward appearance for simplicity. 
+
+unique(data$Gender)
+# Female factors: Female, female, F, f, Trans-female, woman, cis-female/femme, Female (trans), Female (cis), femail, Cis Female, Woman, queer/she/they, Femake, Trans woman
+# Male facotrs: Male, Male-ish, Cis Male, Male (CIS), Man, msle, cis male, Malr, ostensibly male, unsure what that really means, M, male, m, maile,something kinda male?, Mal, Guy (-ish) ^_^, Mail, Cis Man 
+# Fluid: non-binary, Enby, Genderqueer, Androgyne, male leaning androgynous, All, fluid, Agender, queer
+# Other: Nah, Make, Neuter, A little about you, p
+
+data_clean <- data%>%mutate(Gender=ifelse(Gender %in% c("Female", "female", "F", "f", "Trans-female", "woman", "cis-female/femme", "Female (trans)", "Female (cis)", "femail", "Cis Female", "Woman", "queer/she/they", "Femake", "Trans woman"), "Female", 
+             ifelse(Gender %in% c("Male", "Male-ish", "Cis Male", "Male (CIS)", "Man", "msle", "cis male", "Malr", "ostensibly male", "M", "male", "m", "maile","something kinda male?", "Mal", "Guy (-ish) ^_^", "Mail", "Cis Man"), "Male",
+             ifelse( Gender %in% c("non-binary", "Enby", "Genderqueer", "Androgyne", "male leaning androgynous", "All", "fluid", "Agender", "queer"), "Fluid","Other"))))
+
+# Clean up the no_employees. Factors identified through kaggle
+as.factor(data_clean$no_employees)
+data_clean <- data_clean %>% mutate(no_employees= ifelse(no_employees == "5-Jan", "1-5"),
+                                    ifelse(no_employees == "25-Jun", "6-25"))
+
+write.csv(data_clean, file = "MyData.csv", na="")
