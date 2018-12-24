@@ -1,0 +1,95 @@
+# Cleaning Dating Data: https://www.kaggle.com/annavictoria/speed-dating-experiment/version/1
+
+# The dataset is comprised of data before, during and after the speed dating experiment. We
+# will be using only variables that are determined before the actual speed dating event
+# and create a dataset that will allow us to predict potential matches. We will need the data to 
+# be stuctured as the "event", whether they met, person 1 information and preferences, and person 2
+# information and preferences. Each speed date will have all accompanying information for use in 
+# predictions of matching. 
+
+library(tidyverse)
+original_data <- read.csv("Speed Dating Data.csv")
+
+# Create an original key to recreate the final dataset of partners and matches. We will use this 
+# to recombine the clean individualized data. Essentially this creates the framework of who and when
+# the partners met and variables that are dependent on both individuals. 
+# Select iid, pid, match, wave, round, position, position1, order, samerace, 
+merge_set <- original_data %>% select('iid', 'pid', 'match', 'wave', 'round', 'position', 'positin1', 'order', 'samerace')
+
+## Data cleaning
+# drop irrelevant variables 
+as.data.frame(colnames(original_data))
+drop <- c(31,32,120:195,104:114 )
+data1 <- original_data[,-drop]
+as.data.frame(colnames(data1))
+
+# Standardize 10 and 100 point total selections.
+# All dataframes that need to be standardized individually because they sum to 10/100 points. 
+df_pf <-data1[,18:23]
+d_o  <- data1[,25:30]
+d1_1 <- data1[,68:73]
+d4_1 <- data1[,74:79]
+d2_1 <- data1[,80:85]
+d3_1 <- data1[,86:90]
+d5_1 <- data1[,91:95]
+
+# Generic function to standardize information. 
+norm <- function(df){
+          df$new <- rowSums(df)
+          i <- ncol(df) 
+          df <- df[,-i]/df[,i]
+          return(df)
+}
+
+df_pf <- norm(df_pf)
+d_o   <- norm(d_o)
+d1_1  <- norm(d1_1)
+d4_1 <- norm(d4_1)
+d2_1 <- norm(d2_1)
+d3_1 <- norm(d3_1)
+d5_1 <- norm(d5_1)
+
+data1 <- data1[,-c(18:23,25:30, 68:95, 102:106)]
+norm_data <- cbind(df_pf,d_o,d1_1,d4_1,d2_1,d3_1,d5_1)
+data1 <- cbind(data1, norm_data)
+summary(data1)
+as.data.frame(colnames(data1))
+
+# Fix zip code errors. Many zip codes should have a 0 at the start and mostly are being cut and 
+# some are blank or NA and greater than 5 digits. 
+
+data1$zipcode <- gsub( ',', '', data1$zipcode)
+data1$zipcode <- ifelse(data1$zipcode == "" , "0", data1$zipcode)
+replace_na(test$zipcode,0)
+# Ensures the string value has 5 characters
+data1$zipcode <- sprintf("%05s", data1$zipcode)
+# Keep first 5 characters
+data1$zipcode <- substr(data1$zipcode, 1, 5)
+
+# Transform the data for Predictive outcomes. Identify the unique characteristics for each iid. 
+# Baseline number of unique iids. 551 individuals
+length(unique(data1$iid))
+# Remove 18,19, 4:15, 2
+drop_c <- c(2, 4:19, 18,19, 56:73)
+
+data_unique <- unique(data1[,-drop_c])
+
+#check length. Matches 551. 
+length(unique(data_unique$iid))
+
+# IID and PID column name creation for merging purposes. 
+iid_data <- unique(data_unique)
+pid_data <- unique(data_unique)
+colnames(iid_data) <- paste("iid", colnames(iid_data), sep = "_")
+colnames(pid_data) <- paste("pid", colnames(pid_data), sep = "_")
+
+# Recombine dataset using merge dataset.
+colnames(merge_set)
+colnames(iid_data)
+final_data <- left_join(merge_set, iid_data, by = c("iid" = "iid_iid"))
+final_data <- left_join(final_data, pid_data, by = c("pid" = "pid_iid"))
+
+# The final data now is capable of running predictive algorithms against it. The data is structured
+# to have merged set, iid data and pid data. We have what has occured, match or no match and the combination
+# of visiting partners, and individual preferences for both individuals in the match scenario. We
+# can now compare what the speed date combination and predict outcomes. 
